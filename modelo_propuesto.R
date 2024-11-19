@@ -2,7 +2,7 @@
 library(data.table)
 library(ggplot2)
 
-dias <- 200
+dias <- 300
 t <- 1:dias
 
 dias_incubacion <- 5
@@ -23,54 +23,63 @@ I[1] <- E[1] + I_sint[1] + I_asint[1]
 S[1] <- N - I[1]
 
 # probabilidades
-prob_infectarse <- 0.1
+prob_infectarse <- 0.05
 prob_sintomatico <- 0.7
 prob_cuarentena_sint <- 0.9
 prob_recuperarse <- 0.95
 
-for (i in seq(dias-1)) {
+# Rango de personas con las que alguien interactua
+mean_interactions <- 5
+stdDesv_interactions <- 2
+
+for( i in 2:dias ) {
+  # Estamos procesando el dia i
+  aux <- i
+  # Pasar de susceptible a infectado
+  p_encuentro_infectivo <- (I[i]-sum(IS_cuarentena))/(I[i]-sum(IS_cuarentena)+S[i]+sum(R))
+  if( is.na(S[i]) )
+    break
+  if( S[i] != 0 ) {
+    interacciones <- abs(floor(rnorm(S[i], mean_interactions, stdDesv_interactions)))
+    contagios <- rep(0, S[i])
+    for( j in seq(S[i]) ) {
+      contagios[j] <- min(1, rbinom(1, interacciones[j], p_encuentro_infectivo*prob_infectarse))
+    }
+    #cat("", fill = TRUE)
+    infected <- sum(contagios)
+  }
+  else  {
+    infected <- 0
+  }
   
-  # actualizacion de dias
-  
-  E <- shift(E, n=1, fill = 0)
-  I_sint <- shift(I_sint, n=1, fill = 0)
-  IS_cuarentena <- shift(IS_cuarentena, n=1, fill = 0)
-  I_asint <- shift(I_asint, n=1, fill = 0)
-  R <- shift(R, n=1, fill = 0)
-  
-  # pasar de recuperados a susceptibles
-  
-  S[i+1] <- S[i] + R[dias_inmunidad+1]
-  
-  # pasar de susceptibles a incubando
-  
-  prob_infectarse <- (I[i]-sum(IS_cuarentena)) / (S[i]+I[i]+sum(R)-R[dias_inmunidad+1])
-  infected <- sum(rbinom(S[i], 1, prob_infectarse))
-  S[i+1] <- S[i+1] - infected
+  # Nuevas personas incubando
+  E <- shift(E, n=1, fill=0)
   E[1] <- infected
   
-  # pasar de incubando a mostrar o no sintomas
-  
+  # Las que dejaron de incubar pasan a infectados
   muestran_sintomas <- sum(rbinom(E[dias_incubacion+1], 1, prob_sintomatico))
+  
+  I_sint <- shift(I_sint, n=1, fill=0)
+  I_asint <- shift(I_asint, n=1, fill=0)
   I_sint[1] <- muestran_sintomas
   I_asint[1] <- E[dias_incubacion+1] - muestran_sintomas
   
-  # ir a cuarentena teniendo sintomas
-  
+  # Los que tienen sintomas pueden pasar a cuarentena
   entran_cuarentena <- sum(rbinom(muestran_sintomas, 1, prob_cuarentena_sint))
   IS_cuarentena[1] <- entran_cuarentena
+  I_sint[1] <- I_sint[1] - entran_cuarentena
   
-  # pasar de infectados a recuperados
+  # Los que se recuperan pueden pasar a recuperarse
+  recovered <- sum(rbinom(I_sint[dias_infeccion+1]+I_asint[dias_infeccion+1]+
+                            IS_cuarentena[dias_infeccion+1], 1, prob_recuperarse))
   
-  recovered <- sum(rbinom(I_sint[dias_infeccion+1]+I_asint[dias_infeccion+1],
-                          1, prob_recuperarse))
+  R <- shift(R, n=1, fill=0)
   R[1] <- recovered
   
-  I[i+1] <- I[i] +
-    infected -
-    I_sint[dias_infeccion+1] -
-    I_asint[dias_infeccion+1]
-  
+  # Los que pierden inmunidad vuelven a los susceptibles
+  S[i+1] <- S[i]-infected+R[dias_inmunidad+1]
+  I[i+1] <- I[i]+infected-(I_sint[dias_infeccion+1]+I_asint[dias_infeccion+1]+
+                             IS_cuarentena[dias_infeccion+1])
 }
 
 p <- ggplot() +
